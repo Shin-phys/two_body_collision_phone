@@ -1,0 +1,1404 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>重心系・相対運動ビジュアライザー v2</title>
+    <meta name="description" content="物理教育用シミュレーター：重心系と相対運動を視覚的に学ぶ">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        .glass {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+        }
+
+        .toggle-btn {
+            transition: all 0.2s ease;
+        }
+
+        .toggle-btn.active {
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+        }
+
+        .snap-point {
+            position: absolute;
+            width: 3px;
+            height: 12px;
+            background: #94a3b8;
+            border-radius: 2px;
+            transform: translateX(-50%);
+        }
+
+        .snap-label {
+            position: absolute;
+            font-size: 9px;
+            color: #94a3b8;
+            transform: translateX(-50%);
+            white-space: nowrap;
+        }
+
+        canvas {
+            display: block;
+            touch-action: none;
+            /* タッチ操作、スクロールとの干渉防止 */
+            user-select: none;
+        }
+
+        .slider-track {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 8px;
+            background: #334155;
+            border-radius: 4px;
+            outline: none;
+        }
+
+        .slider-track::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.05);
+                opacity: 0.8;
+            }
+        }
+
+        @keyframes glow {
+
+            0%,
+            100% {
+                box-shadow: 0 0 10px rgba(34, 197, 94, 0.5);
+            }
+
+            50% {
+                box-shadow: 0 0 25px rgba(34, 197, 94, 0.8);
+            }
+        }
+
+        .sync-badge {
+            animation: pulse 1.5s infinite, glow 1.5s infinite;
+        }
+
+        .info-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(8px);
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .input-field {
+            background: #1e293b;
+            border: 1px solid #475569;
+            color: white;
+            padding: 6px 10px;
+            border-radius: 6px;
+            width: 70px;
+            text-align: center;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+        }
+
+        .input-field.correct {
+            border-color: #22c55e;
+            box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+        }
+
+        .input-field.incorrect {
+            border-color: #ef4444;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+        // 物理定数
+        const SPRING_K = 0.1; // バネ定数を小さくして振動を見やすく
+        const DT = 1 / 60;
+
+        // トグルボタン
+        const ToggleGroup = ({ label, options, value, onChange }) => (
+            <div className="mb-3">
+                <div className="text-xs text-slate-400 mb-1">{label}</div>
+                <div className="flex gap-2 flex-wrap">
+                    {options.map(opt => (
+                        <button
+                            key={opt}
+                            onClick={() => onChange(opt)}
+                            className={`toggle-btn px-4 py-2 min-h-[44px] rounded-lg text-sm font-medium ${value === opt ? 'active text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                }`}
+                        >
+                            {opt}
+                        </button>
+                    ))}
+                </div>
+            </div>
+        );
+
+        // スナップスライダー
+        const SnapSlider = ({ value, onChange, snapPoints, min, max, label }) => {
+            const handleChange = (e) => {
+                let newVal = parseFloat(e.target.value);
+                for (const sp of snapPoints) {
+                    if (Math.abs(newVal - sp.value) < (max - min) * 0.04) {
+                        newVal = sp.value;
+                        break;
+                    }
+                }
+                onChange(newVal);
+            };
+
+            return (
+                <div className="relative pt-5 pb-1">
+                    {label && <div className="text-xs text-slate-400 mb-1">{label}</div>}
+                    <div className="relative h-3">
+                        {snapPoints.map((sp, i) => {
+                            const pos = ((sp.value - min) / (max - min)) * 100;
+                            if (pos < 0 || pos > 100) return null;
+                            return (
+                                <React.Fragment key={i}>
+                                    <div className="snap-point top-0" style={{ left: `${pos}%` }} />
+                                    <div className="snap-label" style={{ left: `${pos}%`, top: '-16px' }}>
+                                        {sp.label}
+                                    </div>
+                                </React.Fragment>
+                            );
+                        })}
+                    </div>
+                    <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        step={0.1}
+                        value={value}
+                        onChange={handleChange}
+                        className="slider-track mt-1"
+                    />
+                </div>
+            );
+        };
+
+
+        // SYNCバッジ
+        const SyncBadge = ({ active }) => {
+            if (!active) return null;
+            return (
+                <div className="sync-badge inline-flex items-center gap-1 px-3 py-1 rounded-full bg-green-500/20 border border-green-500 text-green-400 text-xs font-bold">
+                    <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+                    CM-FRAME ACTIVE
+                </div>
+            );
+        };
+
+        // メインアプリ
+        const App = () => {
+            // モード: 1=1D衝突, 2=2D基本, 3=2D発展, 4=バネ系
+            const [mode, setMode] = useState(1);
+            const [m1, setM1] = useState(2);
+            const [m2, setM2] = useState(1);
+            const [m3, setM3] = useState(1);
+            const [v1, setV1] = useState(4);
+            const [v2, setV2] = useState(0);
+
+            // 2Dパターン1用のYオフセット
+            const [p1YOffset, setP1YOffset] = useState(20);
+
+            // グラフのビュー状態 (1D, バネ)
+            const [oneDView, setOneDView] = useState({ scaleX: 1, scaleY: 1, offsetX: 0, offsetY: 0 });
+            const [springView, setSpringView] = useState({ scaleX: 1, scaleY: 1, offsetX: 0, offsetY: 0 });
+
+            // ビュー状態のRef (イベントハンドラ内で最新値を参照するため)
+            const oneDViewRef = useRef(oneDView);
+            const springViewRef = useRef(springView);
+
+            useEffect(() => { oneDViewRef.current = oneDView; }, [oneDView]);
+            useEffect(() => { springViewRef.current = springView; }, [springView]);
+
+            // グラフ操作用のRef (矩形ズーム用)
+            const oneDDragRef = useRef({ active: false, startX: 0, startY: 0, currentX: 0, currentY: 0, mode: 'pan' });
+
+            // グラフのビュー状態履歴 (Undo用)
+            const oneDHistoryRef = useRef([]);
+            const springHistoryRef = useRef([]);
+
+            // 2Dモード用の固定速度（4パターン）
+            const [collisionPattern, setCollisionPattern] = useState(1);
+            const v2d = useMemo(() => {
+                if (collisionPattern === 1) {
+                    // パターン1: Bは静止 (Aは水平に動くが位置ずれで衝突)
+                    return { p1: { vx: 3, vy: 0 }, p2: { vx: 0, vy: 0 } };
+                }
+                if (collisionPattern === 2) {
+                    // パターン2: y成分正と負（交差）
+                    return { p1: { vx: 3, vy: -1 }, p2: { vx: -3, vy: 1 } };
+                }
+                if (collisionPattern === 3) {
+                    // パターン3: 両方y成分負（下向き）
+                    return { p1: { vx: 3, vy: -1 }, p2: { vx: -3, vy: -1 } };
+                }
+                // パターン4: 片方は高速で斜め
+                return { p1: { vx: 4, vy: 0.5 }, p2: { vx: -2.5, vy: 1.5 } };
+            }, [collisionPattern]);
+
+            // カメラ制御
+            const [cameraMag, setCameraMag] = useState(0); // Mode 2a: 大きさ
+            const [cameraVx, setCameraVx] = useState(0);   // Mode 2b & 1D
+            const [cameraVy, setCameraVy] = useState(0);   // Mode 2b用
+
+            const [playing, setPlaying] = useState(false);
+            const [slowMo, setSlowMo] = useState(false);
+            const [restitution, setRestitution] = useState(1.0); // 反発係数 e
+            const [showInfo, setShowInfo] = useState(false);
+            const [time, setTime] = useState(0);
+            const [showVelocityPlot, setShowVelocityPlot] = useState(false);
+            const [showXtPlot, setShowXtPlot] = useState(false);
+            const [showCmPlot, setShowCmPlot] = useState(false);
+            const [showGraph, setShowGraph] = useState(false);
+
+            const canvasRef = useRef(null);
+            const oneDGraphRef = useRef(null);
+            const springGraphRef = useRef(null);
+            const stateRef = useRef(null);
+            const traceRef = useRef({ p1: [], p2: [] });
+            const springHistRef = useRef([]);
+            const oneDHistRef = useRef([]);
+            const springDragRef = useRef({ active: false, startX: 0, startY: 0, currentX: 0, currentY: 0, mode: 'pan' });
+            const animRef = useRef(null);
+
+            // 重心速度計算（2Dベクトル対応）
+            const calcVg = useCallback(() => {
+                if (mode === 4) {
+                    // バネ系（BとCを基準に重心速度）
+                    const s = stateRef.current;
+                    if (s?.p2 && s?.p3) {
+                        return {
+                            x: (s.p2.m * s.p2.vx + s.p3.m * s.p3.vx) / (s.p2.m + s.p3.m),
+                            y: 0
+                        };
+                    }
+                    return { x: 0, y: 0 };
+                } else if (mode === 2 || mode === 3) {
+                    // 2Dモード
+                    const totalM = m1 + m2;
+                    return {
+                        x: (m1 * v2d.p1.vx + m2 * v2d.p2.vx) / totalM,
+                        y: (m1 * v2d.p1.vy + m2 * v2d.p2.vy) / totalM
+                    };
+                }
+                // 1Dモード
+                return { x: (m1 * v1 + m2 * v2) / (m1 + m2), y: 0 };
+            }, [mode, m1, m2, m3, v1, v2, v2d]);
+
+            // 現在のカメラ速度
+            const getCameraV = useCallback(() => {
+                if (mode === 2 || mode === 3) {
+                    // Mode 2a: 大きさ制御
+                    const vg = calcVg();
+                    const vgMag = Math.sqrt(vg.x ** 2 + vg.y ** 2);
+                    if (vgMag === 0) return { x: 0, y: 0 };
+                    return {
+                        x: (vg.x / vgMag) * cameraMag,
+                        y: (vg.y / vgMag) * cameraMag
+                    };
+                } else if (mode === 3) {
+                    // Mode 2b: 成分入力
+                    return { x: cameraVx, y: cameraVy };
+                }
+                // 1D & バネ系
+                return { x: cameraVx, y: 0 };
+            }, [mode, cameraMag, cameraVx, cameraVy, calcVg]);
+
+            // SYNC判定
+            const isSynced = useMemo(() => {
+                const vg = calcVg();
+                const cam = getCameraV();
+                const dx = Math.abs(vg.x - cam.x);
+                const dy = Math.abs(vg.y - cam.y);
+                return dx < 0.15 && dy < 0.15;
+            }, [calcVg, getCameraV]);
+
+            // スナップポイント生成（1D用）
+            const getSnapPoints1D = useCallback(() => {
+                const vg = calcVg();
+                const points = [{ value: 0, label: 'V=0' }];
+                if (Math.abs(vg.x) > 0.1) points.push({ value: vg.x, label: `VG` });
+                if (v1 !== 0) points.push({ value: v1, label: `v₁` });
+                if (v2 !== 0) points.push({ value: v2, label: `v₂` });
+                return points.sort((a, b) => a.value - b.value);
+            }, [calcVg, v1, v2]);
+
+            // スナップポイント生成（2a用 - 大きさ）
+            const getSnapPoints2D = useCallback(() => {
+                const vg = calcVg();
+                const vgMag = Math.sqrt(vg.x ** 2 + vg.y ** 2);
+                return [
+                    { value: 0, label: '0' },
+                    { value: vgMag, label: '|VG|' }
+                ];
+            }, [calcVg]);
+
+            // 初期状態設定
+            const initState = useCallback(() => {
+                springHistRef.current = [];
+                oneDHistRef.current = [];
+                traceRef.current = { p1: [], p2: [] };
+
+                if (mode === 1) {
+                    stateRef.current = {
+                        p1: { x: -150, y: 0, vx: v1, vy: 0, m: m1 },
+                        p2: { x: 150, y: 0, vx: v2, vy: 0, m: m2 },
+                        collided: false,
+                        simTime: 0
+                    };
+                } else if (mode === 2 || mode === 3) {                    // 確実に衝突する初期座標
+                    let initPos;
+                    if (collisionPattern === 1) {
+                        // パターン1: Bは静止、AのY座標をオフセットで調整
+                        initPos = { p1: { x: -150, y: -60 + p1YOffset }, p2: { x: 150, y: -60 } };
+                    } else if (collisionPattern === 3) {
+                        // 両方同じy座標
+                        initPos = { p1: { x: -150, y: -60 }, p2: { x: 150, y: -60 } };
+                    } else if (collisionPattern === 2) {
+                        // y座標が逆（交差）
+                        initPos = { p1: { x: -150, y: 60 }, p2: { x: 150, y: -60 } };
+                    } else {
+                        // パターン4: 斜め高速（近いyで確実に接近）
+                        initPos = { p1: { x: -150, y: -30 }, p2: { x: 150, y: -50 } };
+                    }
+                    stateRef.current = {
+                        p1: { x: initPos.p1.x, y: initPos.p1.y, vx: v2d.p1.vx, vy: v2d.p1.vy, m: m1 },
+                        p2: { x: initPos.p2.x, y: initPos.p2.y, vx: v2d.p2.vx, vy: v2d.p2.vy, m: m2 },
+                        collided: false,
+                        simTime: 0
+                    };
+                } else {
+                    stateRef.current = {
+                        p1: { x: -200, y: 0, vx: v1, vy: 0, m: m1 },
+                        p2: { x: 0, y: 0, vx: 0, vy: 0, m: m2, originalM: m2 },
+                        p3: { x: 100, y: 0, vx: 0, vy: 0, m: m3 },
+                        merged: false,
+                        collided: false,
+                        springRest: 100,
+                        simTime: 0,
+                        collisionTime: null,
+                        cameraAnchorX: null
+                    };
+                }
+                setTime(0);
+            }, [mode, m1, m2, m3, v1, v2, v2d, collisionPattern, p1YOffset]);
+
+            const getCameraPosition = useCallback((simTime, s) => {
+                const camV = getCameraV();
+                if (mode === 4) {
+                    const cmBC = (s.p2.m * s.p2.x + s.p3.m * s.p3.x) / (s.p2.m + s.p3.m);
+                    if (s.collisionTime === null || simTime < s.collisionTime) {
+                        return { x: cmBC, y: 0 };
+                    }
+                    const base = s.cameraAnchorX ?? cmBC;
+                    return {
+                        x: base + camV.x * (simTime - s.collisionTime) * 60,
+                        y: 0
+                    };
+                }
+                return { x: camV.x * simTime * 60, y: camV.y * simTime * 60 };
+            }, [getCameraV, mode]);
+
+            const handleReset = () => {
+                setPlaying(false);
+                initState();
+            };
+
+            useEffect(() => {
+                initState();
+            }, [initState]);
+
+            // 物理更新（Symplectic Euler法適用）
+            const updatePhysics = useCallback((dt) => {
+                const s = stateRef.current;
+                if (!s) return;
+                const scale = dt * 60;
+                s.simTime = (s.simTime || 0) + dt;
+                const simTime = s.simTime;
+
+                if (mode === 1) {
+                    // 1D衝突
+                    s.p1.x += s.p1.vx * scale;
+                    s.p2.x += s.p2.vx * scale;
+
+                    const r1 = 15 + s.p1.m * 5;
+                    const r2 = 15 + s.p2.m * 5;
+                    if (!s.collided && Math.abs(s.p1.x - s.p2.x) < r1 + r2) {
+                        // 反発係数を適用した弾性衝突
+                        const e = restitution;
+                        const v1New = ((s.p1.m - e * s.p2.m) * s.p1.vx + (1 + e) * s.p2.m * s.p2.vx) / (s.p1.m + s.p2.m);
+                        const v2New = ((s.p2.m - e * s.p1.m) * s.p2.vx + (1 + e) * s.p1.m * s.p1.vx) / (s.p1.m + s.p2.m);
+                        s.p1.vx = v1New;
+                        s.p2.vx = v2New;
+                        s.collided = true;
+                    }
+                } else if (mode === 2 || mode === 3) {
+                    // 2D衝突
+                    s.p1.x += s.p1.vx * scale;
+                    s.p1.y += s.p1.vy * scale;
+                    s.p2.x += s.p2.vx * scale;
+                    s.p2.y += s.p2.vy * scale;
+
+                    const dx = s.p2.x - s.p1.x;
+                    const dy = s.p2.y - s.p1.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const r1 = 15 + s.p1.m * 5;
+                    const r2 = 15 + s.p2.m * 5;
+
+                    if (!s.collided && dist < r1 + r2 && dist > 0) {
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        const dvx = s.p1.vx - s.p2.vx;
+                        const dvy = s.p1.vy - s.p2.vy;
+                        const dvn = dvx * nx + dvy * ny;
+
+                        if (dvn > 0) {
+                            // 反発係数を適用
+                            const e = restitution;
+                            const j = ((1 + e) * dvn) / (1 / s.p1.m + 1 / s.p2.m);
+                            s.p1.vx -= j * nx / s.p1.m;
+                            s.p1.vy -= j * ny / s.p1.m;
+                            s.p2.vx += j * nx / s.p2.m;
+                            s.p2.vy += j * ny / s.p2.m;
+                            s.collided = true;
+                        }
+                    }
+                } else {
+                    // Mode 4: バネ系（Symplectic Euler法）
+                    if (!s.merged) {
+                        s.p1.x += s.p1.vx * scale;
+                        if (!s.collided && Math.abs(s.p1.x - s.p2.x) < 30) {
+                            // A-B衝突（反発係数適用）
+                            const e = restitution;
+                            const totalM = s.p1.m + s.p2.originalM;
+                            if (e === 0) {
+                                // 完全非弾性衝突（合体）
+                                s.p2.vx = (s.p1.m * s.p1.vx + s.p2.originalM * s.p2.vx) / totalM;
+                                s.p2.m = totalM;
+                                s.p1.x = -9999;
+                                s.merged = true;
+                            } else {
+                                const v1New = ((s.p1.m - e * s.p2.originalM) * s.p1.vx + (1 + e) * s.p2.originalM * s.p2.vx) / totalM;
+                                const v2New = ((s.p2.originalM - e * s.p1.m) * s.p2.vx + (1 + e) * s.p1.m * s.p1.vx) / totalM;
+                                s.p1.vx = v1New;
+                                s.p2.vx = v2New;
+                            }
+                            s.collided = true;
+                            s.collisionTime = simTime;
+                            s.cameraAnchorX = (s.p2.m * s.p2.x + s.p3.m * s.p3.x) / (s.p2.m + s.p3.m);
+                        }
+                    }
+
+                    // Symplectic Euler法（サブステップで安定化）
+                    const subSteps = 10;
+                    const subDt = scale / subSteps;
+
+                    for (let i = 0; i < subSteps; i++) {
+                        const stretch = (s.p3.x - s.p2.x) - s.springRest;
+                        const F = -SPRING_K * stretch;
+
+                        // 加速度
+                        const a2 = -F / s.p2.m;
+                        const a3 = F / s.p3.m;
+
+                        // 速度を先に更新（Symplectic Euler）
+                        s.p2.vx += a2 * subDt;
+                        s.p3.vx += a3 * subDt;
+
+                        // 更新された速度で位置を更新
+                        s.p2.x += s.p2.vx * subDt;
+                        s.p3.x += s.p3.vx * subDt;
+                    }
+                }
+                if (mode === 2 || mode === 3) {
+                    const camPos = { x: getCameraV().x * simTime * 60, y: getCameraV().y * simTime * 60 };
+                    traceRef.current.p1.push({ x: s.p1.x - camPos.x, y: s.p1.y - camPos.y });
+                    traceRef.current.p2.push({ x: s.p2.x - camPos.x, y: s.p2.y - camPos.y });
+                    if (traceRef.current.p1.length > 240) {
+                        traceRef.current.p1.shift();
+                        traceRef.current.p2.shift();
+                    }
+                }
+
+
+                if (mode === 4) {
+                    const camPos = getCameraPosition(simTime, s);
+                    const cameraVel = (s.collisionTime !== null && simTime >= s.collisionTime) ? getCameraV().x : 0;
+                    springHistRef.current.push({
+                        t: simTime,
+                        xB: s.p2.x - camPos.x,
+                        xC: s.p3.x - camPos.x,
+                        vB: s.p2.vx - cameraVel,
+                        vC: s.p3.vx - cameraVel
+                    });
+                    if (springHistRef.current.length > 240) springHistRef.current.shift();
+                }
+
+                if (mode === 1) {
+                    const cmVx = (s.p1.m * s.p1.vx + s.p2.m * s.p2.vx) / (s.p1.m + s.p2.m);
+                    const cmX = (s.p1.m * s.p1.x + s.p2.m * s.p2.x) / (s.p1.m + s.p2.m);
+                    oneDHistRef.current.push({
+                        t: simTime,
+                        v1: s.p1.vx,
+                        v2: s.p2.vx,
+                        x1: s.p1.x,
+                        x2: s.p2.x,
+                        vcm: cmVx,
+                        xcm: cmX
+                    });
+                    if (oneDHistRef.current.length > 240) oneDHistRef.current.shift();
+                }
+            }, [mode, calcVg, restitution, getCameraV, getCameraPosition]);
+
+            // 描画
+            const draw = useCallback(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas?.getContext('2d');
+                if (!ctx || !stateRef.current) return;
+
+                const w = canvas.width;
+                const h = canvas.height;
+                const s = stateRef.current;
+                const simTime = s.simTime || time;
+                const camPos = getCameraPosition(simTime, s);
+
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, w, h);
+
+                const offsetX = w / 2 - camPos.x;
+                const offsetY = h / 2 - camPos.y;
+
+                // 動的グリッド
+                ctx.strokeStyle = 'rgba(148, 163, 184, 0.15)';
+                ctx.lineWidth = 1;
+                const gridSize = 50;
+                const gridOffsetX = (offsetX % gridSize + gridSize) % gridSize;
+                const gridOffsetY = (offsetY % gridSize + gridSize) % gridSize;
+
+                for (let x = gridOffsetX; x < w; x += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, h);
+                    ctx.stroke();
+                }
+                for (let y = gridOffsetY; y < h; y += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(w, y);
+                    ctx.stroke();
+                }
+
+
+                if (mode === 2 || mode === 3) {
+                    const drawTrace = (trace, color) => {
+                        if (!trace.length) return;
+                        ctx.beginPath();
+                        trace.forEach((pos, idx) => {
+                            const x = w / 2 + pos.x;
+                            const y = h / 2 + pos.y;
+                            if (idx === 0) ctx.moveTo(x, y);
+                            else ctx.lineTo(x, y);
+                        });
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    };
+                    drawTrace(traceRef.current.p1, 'rgba(148, 163, 184, 0.75)');
+                    drawTrace(traceRef.current.p2, 'rgba(148, 163, 184, 0.60)');
+                }
+
+                // 粒子描画関数
+                const drawParticle = (p, color, label) => {
+                    if (!p || p.x < -9000) return;
+                    const px = offsetX + p.x;
+                    const py = offsetY + (p.y || 0);
+                    const r = 15 + p.m * 5;
+
+                    const grad = ctx.createRadialGradient(px, py, 0, px, py, r);
+                    grad.addColorStop(0, color);
+                    grad.addColorStop(1, color.replace(')', ', 0.3)').replace('rgb', 'rgba'));
+                    ctx.beginPath();
+                    ctx.arc(px, py, r, 0, Math.PI * 2);
+                    ctx.fillStyle = grad;
+                    ctx.fill();
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 12px sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(label, px, py + 4);
+
+                    // 速度ベクトル
+                    const vMag = Math.sqrt((p.vx || 0) ** 2 + (p.vy || 0) ** 2);
+                    if (vMag > 0.1) {
+                        const vScale = 10;
+                        const vx = p.vx * vScale;
+                        const vy = (p.vy || 0) * vScale;
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        ctx.lineTo(px + vx, py + vy);
+                        ctx.strokeStyle = '#fbbf24';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                        const angle = Math.atan2(vy, vx);
+                        ctx.beginPath();
+                        ctx.moveTo(px + vx, py + vy);
+                        ctx.lineTo(px + vx - 8 * Math.cos(angle - 0.4), py + vy - 8 * Math.sin(angle - 0.4));
+                        ctx.lineTo(px + vx - 8 * Math.cos(angle + 0.4), py + vy - 8 * Math.sin(angle + 0.4));
+                        ctx.closePath();
+                        ctx.fillStyle = '#fbbf24';
+                        ctx.fill();
+                    }
+                };
+
+                drawParticle(s.p1, 'rgb(244, 114, 182)', 'A');
+                drawParticle(s.p2, 'rgb(56, 189, 248)', 'B');
+                if (s.p3) drawParticle(s.p3, 'rgb(74, 222, 128)', 'C');
+
+                // バネ描画
+                if (mode === 4 && s.p2 && s.p3) {
+                    const x1 = offsetX + s.p2.x + 20;
+                    const x2 = offsetX + s.p3.x - 20;
+                    const y = offsetY;
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y);
+                    const coils = 8;
+                    const amp = 10;
+                    for (let i = 0; i <= coils; i++) {
+                        const t = i / coils;
+                        const x = x1 + (x2 - x1) * t;
+                        const yOff = (i % 2 === 0 ? 1 : -1) * amp * (i > 0 && i < coils ? 1 : 0);
+                        ctx.lineTo(x, y + yOff);
+                    }
+                    ctx.strokeStyle = '#a78bfa';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                }
+
+                // 重心マーカー
+                const cmX = (() => {
+                    if (mode === 4) {
+                        if (s.merged) {
+                            return (s.p2.m * s.p2.x + s.p3.m * s.p3.x) / (s.p2.m + s.p3.m);
+                        }
+                        return (s.p1.m * s.p1.x + s.p2.m * s.p2.x + s.p3.m * s.p3.x) / (s.p1.m + s.p2.m + s.p3.m);
+                    }
+                    if (s.p1.x < -9000) return s.p2.x;
+                    return (s.p1.m * s.p1.x + s.p2.m * s.p2.x) / (s.p1.m + s.p2.m);
+                })();
+                const cmY = (mode === 2 || mode === 3) && s.p1.x > -9000
+                    ? (s.p1.m * s.p1.y + s.p2.m * s.p2.y) / (s.p1.m + s.p2.m)
+                    : 0;
+
+                const cmPx = offsetX + cmX;
+                const cmPy = offsetY + cmY;
+                ctx.beginPath();
+                ctx.moveTo(cmPx - 12, cmPy);
+                ctx.lineTo(cmPx + 12, cmPy);
+                ctx.moveTo(cmPx, cmPy - 12);
+                ctx.lineTo(cmPx, cmPy + 12);
+                ctx.strokeStyle = '#facc15';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.font = 'bold 10px sans-serif';
+                ctx.fillStyle = '#facc15';
+                ctx.fillText('CM', cmPx + 15, cmPy - 8);
+
+                // 2Dモード: 重心速度ゴーストベクトル
+                if ((mode === 2 || mode === 3) && !isSynced) {
+                    const vg = calcVg();
+                    const vScale = 15;
+                    ctx.beginPath();
+                    ctx.setLineDash([5, 5]);
+                    ctx.moveTo(cmPx, cmPy);
+                    ctx.lineTo(cmPx + vg.x * vScale, cmPy + vg.y * vScale);
+                    ctx.strokeStyle = 'rgba(250, 204, 21, 0.5)';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    ctx.font = '9px sans-serif';
+                    ctx.fillStyle = 'rgba(250, 204, 21, 0.7)';
+                    ctx.fillText('VG', cmPx + vg.x * vScale + 5, cmPy + vg.y * vScale);
+                }
+
+                if (mode === 1) {
+                    const gCanvas = oneDGraphRef.current;
+                    const gCtx = gCanvas?.getContext('2d');
+                    if (gCtx) {
+                        const gw = gCanvas.width;
+                        const gh = gCanvas.height;
+                        gCtx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+                        gCtx.fillRect(0, 0, gw, gh);
+
+                        const hist = oneDHistRef.current;
+                        const values = hist.flatMap(h => showXtPlot ? [h.x1, h.x2, h.xcm] : [h.v1, h.v2, h.vcm]);
+                        const maxAbs = Math.max(10, ...values.map(v => Math.abs(v)));
+
+                        gCtx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
+                        gCtx.beginPath();
+                        gCtx.moveTo(0, gh / 2);
+                        gCtx.lineTo(gw, gh / 2);
+                        gCtx.stroke();
+
+                        const drawLine = (key, color, dashed = false) => {
+                            const { scaleX, scaleY, offsetX, offsetY } = oneDView;
+
+                            gCtx.beginPath();
+                            hist.forEach((h, i) => {
+                                const x = ((i / 240) * gw * scaleX) + offsetX;
+                                const yVal = h[key];
+                                const y = gh / 2 - (yVal / maxAbs) * (gh * 0.45) * scaleY + offsetY;
+                                if (i === 0) gCtx.moveTo(x, y);
+                                else gCtx.lineTo(x, y);
+                            });
+                            gCtx.strokeStyle = color;
+                            gCtx.lineWidth = 2;
+                            gCtx.setLineDash(dashed ? [6, 4] : []);
+                            gCtx.stroke();
+                            gCtx.setLineDash([]);
+                        };
+
+                        if (showXtPlot) {
+                            drawLine('x1', '#f472b6');
+                            drawLine('x2', '#38bdf8');
+                            if (showCmPlot) drawLine('xcm', '#facc15', true);
+                        } else {
+                            drawLine('v1', '#f472b6');
+                            drawLine('v2', '#38bdf8');
+                            if (showCmPlot) drawLine('vcm', '#facc15', true);
+                        }
+
+                        gCtx.font = '11px sans-serif';
+                        gCtx.fillStyle = '#f472b6';
+                        gCtx.fillText('A', 6, 12);
+                        gCtx.fillStyle = '#38bdf8';
+                        gCtx.fillText('B', 20, 12);
+                        if (showCmPlot) {
+                            gCtx.fillStyle = '#facc15';
+                            gCtx.fillText('CM', 34, 12);
+                        }
+
+                        // 矩形ズームの選択範囲描画
+                        const d = oneDDragRef.current;
+                        if (d.active && d.mode === 'zoom') {
+                            const rectX = Math.min(d.startX, d.currentX);
+                            const rectY = Math.min(d.startY, d.currentY);
+                            const rectW = Math.abs(d.currentX - d.startX);
+                            const rectH = Math.abs(d.currentY - d.startY);
+                            gCtx.fillStyle = 'rgba(56, 189, 248, 0.2)';
+                            gCtx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+                            gCtx.fillRect(rectX, rectY, rectW, rectH);
+                            gCtx.strokeRect(rectX, rectY, rectW, rectH);
+                        }
+                    }
+                }
+
+                if (mode === 4) {
+                    const tCanvas = springGraphRef.current;
+                    const tCtx = tCanvas?.getContext('2d');
+                    if (tCtx) {
+                        const tw = tCanvas.width;
+                        const th = tCanvas.height;
+                        tCtx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+                        tCtx.fillRect(0, 0, tw, th);
+
+                        const hist = springHistRef.current;
+                        const values = hist.flatMap(h => showVelocityPlot ? [h.vB, h.vC] : [h.xB, h.xC]);
+                        const maxAbs = Math.max(20, ...values.map(v => Math.abs(v)));
+                        const { scaleX, scaleY, offsetX, offsetY } = springView;
+
+                        tCtx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
+                        tCtx.beginPath();
+                        tCtx.moveTo(0, th / 2 + offsetY);
+                        tCtx.lineTo(tw, th / 2 + offsetY);
+                        tCtx.stroke();
+
+                        const drawLine = (key, color) => {
+                            tCtx.beginPath();
+                            hist.forEach((h, i) => {
+                                const x = (i / 240) * tw * scaleX + offsetX;
+                                const yVal = showVelocityPlot ? h[key.replace('x', 'v')] : h[key];
+                                const y = th / 2 - (yVal / maxAbs) * (th * 0.45) * scaleY + offsetY;
+                                if (i === 0) tCtx.moveTo(x, y);
+                                else tCtx.lineTo(x, y);
+                            });
+                            tCtx.strokeStyle = color;
+                            tCtx.lineWidth = 2;
+                            tCtx.stroke();
+                        };
+
+                        drawLine('xB', '#38bdf8');
+                        drawLine('xC', '#4ade80');
+
+                        tCtx.font = '10px sans-serif';
+                        tCtx.fillStyle = '#38bdf8';
+                        tCtx.fillText('B', 6, 12);
+                        tCtx.fillStyle = '#4ade80';
+                        tCtx.fillText('C', 20, 12);
+
+                        // 矩形ズームの選択範囲描画
+                        const d = springDragRef.current;
+                        if (d.active && d.mode === 'zoom') {
+                            const rectX = Math.min(d.startX, d.currentX);
+                            const rectY = Math.min(d.startY, d.currentY);
+                            const rectW = Math.abs(d.currentX - d.startX);
+                            const rectH = Math.abs(d.currentY - d.startY);
+                            tCtx.fillStyle = 'rgba(56, 189, 248, 0.2)';
+                            tCtx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+                            tCtx.fillRect(rectX, rectY, rectW, rectH);
+                            tCtx.strokeRect(rectX, rectY, rectW, rectH);
+                        }
+                    }
+                }
+            }, [getCameraV, getCameraPosition, time, mode, calcVg, isSynced, showVelocityPlot, showXtPlot, showCmPlot, springView, oneDView]);
+
+            // アニメーションループ
+            useEffect(() => {
+                if (!playing) return;
+                const loop = () => {
+                    const dt = slowMo ? DT * 0.5 : DT;
+                    updatePhysics(dt);
+                    setTime(t => t + dt);
+                    draw();
+                    animRef.current = requestAnimationFrame(loop);
+                };
+                animRef.current = requestAnimationFrame(loop);
+                return () => cancelAnimationFrame(animRef.current);
+            }, [playing, slowMo, updatePhysics, draw]);
+
+            useEffect(() => { draw(); }, [draw]);
+
+            useEffect(() => {
+                const resize = () => {
+                    const canvas = canvasRef.current;
+                    const oneDGraph = oneDGraphRef.current;
+                    if (canvas) {
+                        canvas.width = canvas.parentElement.clientWidth;
+                        canvas.height = canvas.parentElement.clientHeight;
+                    }
+                    if (oneDGraph) {
+                        oneDGraph.width = oneDGraph.parentElement.clientWidth;
+                        oneDGraph.height = oneDGraph.parentElement.clientHeight;
+                    }
+                    if (springGraphRef.current) {
+                        springGraphRef.current.width = springGraphRef.current.parentElement.clientWidth;
+                        springGraphRef.current.height = springGraphRef.current.parentElement.clientHeight;
+                    }
+                    draw();
+                };
+                resize();
+                window.addEventListener('resize', resize);
+                return () => window.removeEventListener('resize', resize);
+            }, [draw]);
+
+
+            // グラフ操作用フック (矩形ズーム対応版)
+            const useGraphControl = (canvasRef, setViewState, viewRef, dragRef, historyRef) => {
+                useEffect(() => {
+                    const canvas = canvasRef.current;
+                    if (!canvas) return;
+
+                    const handlePointerDown = (event) => {
+                        const rect = canvas.getBoundingClientRect();
+                        const x = event.clientX - rect.left;
+                        const y = event.clientY - rect.top;
+
+                        // Shiftキーで矩形ズームモード
+                        const mode = event.shiftKey ? 'zoom' : 'pan';
+
+                        dragRef.current = {
+                            active: true,
+                            mode: mode,
+                            startX: x,
+                            startY: y,
+                            currentX: x,
+                            currentY: y,
+                            startOffsetX: viewRef.current.offsetX,
+                            startOffsetY: viewRef.current.offsetY
+                        };
+                        canvas.setPointerCapture(event.pointerId);
+                    };
+
+                    const handlePointerMove = (event) => {
+                        if (!dragRef.current.active) return;
+                        const rect = canvas.getBoundingClientRect();
+                        const x = event.clientX - rect.left;
+                        const y = event.clientY - rect.top;
+
+                        dragRef.current.currentX = x;
+                        dragRef.current.currentY = y;
+
+                        if (dragRef.current.mode === 'pan') {
+                            const dx = x - dragRef.current.startX;
+                            const dy = y - dragRef.current.startY;
+                            setViewState(prev => ({
+                                ...prev,
+                                offsetX: dragRef.current.startOffsetX + dx,
+                                offsetY: dragRef.current.startOffsetY + dy
+                            }));
+                        }
+                        // 矩形描画のために再描画が必要だが、requestAnimationFrameループで処理される
+                    };
+
+                    const handlePointerUp = (event) => {
+                        const d = dragRef.current;
+                        if (!d.active) return;
+
+                        if (d.mode === 'zoom') {
+                            const rectX = Math.min(d.startX, d.currentX);
+                            const rectY = Math.min(d.startY, d.currentY);
+                            const rectW = Math.abs(d.currentX - d.startX);
+                            const rectH = Math.abs(d.currentY - d.startY);
+
+                            // 誤操作防止：ある程度大きくドラッグした場合のみズーム
+                            if (rectW > 10 && rectH > 10) {
+                                // 履歴保存
+                                historyRef.current.push(viewRef.current);
+                                if (historyRef.current.length > 20) historyRef.current.shift();
+
+                                const canvasW = canvas.width;
+                                const canvasH = canvas.height;
+                                const centerX = (d.startX + d.currentX) / 2;
+                                const centerY = (d.startY + d.currentY) / 2;
+
+                                setViewState(prev => {
+                                    const zoomX = canvasW / rectW;
+                                    const zoomY = canvasH / rectH;
+                                    const newScaleX = prev.scaleX * zoomX;
+                                    const newScaleY = prev.scaleY * zoomY;
+
+                                    // 中心を合わせる計算
+                                    // 現在の画面中心からのズレを補正
+                                    // 簡易実装: 中心点にフォーカス
+                                    return {
+                                        scaleX: newScaleX,
+                                        scaleY: newScaleY,
+                                        // ズーム後の左上座標を計算してオフセットを設定
+                                        // 現在のオフセットの影響も含めて、選択範囲の左上が新しいビューの左上に来るようにする
+                                        offsetX: prev.offsetX * zoomX - (rectX * zoomX) + (canvasW / 2) * (zoomX - 1) * 0, // 簡易補正: 0 start
+                                        // 正確な補正:
+                                        // 新しいoffsetX = (現在のoffsetX - 選択範囲左上) * ズーム率 ? 
+                                        // より単純に: 選択範囲の中心がキャンバスの中心に来るようにする
+                                        offsetX: (canvasW / 2) - ((rectX + rectW / 2) - prev.offsetX) * zoomX - prev.offsetX * (zoomX - 1) + prev.offsetX * zoomX,
+                                        // 試行錯誤ではなく論理的に:
+                                        // 元のデータ空間での中心座標 = (画面上の中心 - offsetX) / scaleX
+                                        // 新しいデータ空間での中心座標 = (画面上の中心 - newOffsetX) / newScaleX
+                                        // データ空間での選択範囲中心 = ((rectX + rectW/2) - offsetX) / scaleX
+                                        // これが新しい画面中心 (canvasW/2) に来るようにしたい
+                                        // (canvasW/2 - newOffsetX) / newScaleX = ((rectX + rectW/2) - offsetX) / scaleX
+                                        // newOffsetX = canvasW/2 - [((rectX + rectW/2) - offsetX) / scaleX] * newScaleX
+                                        offsetX: canvasW / 2 - (((rectX + rectW / 2) - prev.offsetX) / prev.scaleX) * newScaleX,
+                                        offsetY: canvasH / 2 - (((rectY + rectH / 2) - prev.offsetY) / prev.scaleY) * newScaleY
+                                    };
+                                });
+                            }
+                        }
+
+                        d.active = false;
+                        d.mode = 'pan'; // Reset
+                        try { canvas.releasePointerCapture(event.pointerId); } catch (e) { }
+                    };
+
+                    canvas.addEventListener('pointerdown', handlePointerDown);
+                    canvas.addEventListener('pointermove', handlePointerMove);
+                    canvas.addEventListener('pointerup', handlePointerUp);
+                    canvas.addEventListener('pointerleave', handlePointerUp);
+
+                    return () => {
+                        canvas.removeEventListener('pointerdown', handlePointerDown);
+                        canvas.removeEventListener('pointermove', handlePointerMove);
+                        canvas.removeEventListener('pointerup', handlePointerUp);
+                        canvas.removeEventListener('pointerleave', handlePointerUp);
+                    };
+                }, [canvasRef, setViewState, viewRef, dragRef, historyRef]);
+            };
+
+            const handleUndo = (setFunc, historyRef) => {
+                if (historyRef.current.length > 0) {
+                    const prev = historyRef.current.pop();
+                    setFunc(prev);
+                }
+            };
+
+            const handleResetZoom = (setFunc, historyRef) => {
+                historyRef.current = []; // 履歴クリア
+                setFunc({ scaleX: 1, scaleY: 1, offsetX: 0, offsetY: 0 });
+            };
+
+            // 1Dとバネグラフの両方に適用
+            useGraphControl(oneDGraphRef, setOneDView, oneDViewRef, oneDDragRef, oneDHistoryRef);
+            useGraphControl(springGraphRef, setSpringView, springViewRef, springDragRef, springHistoryRef);
+
+            const vg = calcVg();
+
+            return (
+                <div className="flex flex-col h-[100dvh] overflow-hidden text-white bg-slate-900">
+                    {/* 上部固定領域 */}
+                    <div className="flex-none shadow-lg z-10 bg-slate-900 border-b border-slate-700">
+                        <div className="p-2 sm:p-3 relative">
+                            {/* ヘッダー */}
+                            <div className="flex justify-between items-center mb-2">
+                                <div>
+                                    <h1 className="text-lg md:text-xl font-bold bg-gradient-to-r from-pink-400 via-purple-400 to-blue-400 bg-clip-text text-transparent">
+                                        重心系・相対運動ビジュアライザー
+                                    </h1>
+                                    <div className="mt-1">
+                                        <SyncBadge active={isSynced} />
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setShowInfo(true)}
+                                    className="p-2 rounded-full bg-slate-700 hover:bg-slate-600 transition min-h-[44px] min-w-[44px] flex items-center justify-center"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            {/* モード選択 */}
+                            <div className="flex gap-2 mb-2 overflow-x-auto pb-1">
+                                {[
+                                    { id: 1, label: '1D衝突', desc: '正面/追突' },
+                                    { id: 2, label: '2D基本', desc: 'スライダー' },
+                                    { id: 3, label: '2D発展', desc: '成分入力' },
+                                    { id: 4, label: 'バネ系', desc: '東大モデル' }
+                                ].map(m => (
+                                    <button
+                                        key={m.id}
+                                        onClick={() => { setMode(m.id); setPlaying(false); setShowGraph(false); }}
+                                        className={`flex-shrink-0 px-3 py-2 min-h-[44px] rounded-lg transition ${mode === m.id
+                                            ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white'
+                                            : 'glass text-slate-300 hover:bg-slate-600'
+                                            }`}
+                                    >
+                                        <div className="font-medium text-sm">{m.label}</div>
+                                        <div className="text-xs opacity-70">{m.desc}</div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* メインキャンバス */}
+                        <div className="relative w-full h-[30vh]">
+                            <canvas ref={canvasRef} className="w-full h-full" />
+                        </div>
+                        {/* クイックアクションボタン */}
+                        <div className="flex gap-2 p-2 bg-slate-800">
+                            <button
+                                onClick={() => setPlaying(!playing)}
+                                className="flex-1 py-2 min-h-[44px] rounded-lg bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 font-bold transition text-lg shadow-lg text-white"
+                            >
+                                {playing ? '⏸ 停止' : '▶ 再生'}
+                            </button>
+                            <button onClick={handleReset} className="px-4 py-2 min-h-[44px] rounded-lg bg-slate-600 hover:bg-slate-500 transition text-lg shadow-lg">🔄</button>
+                            <button
+                                onClick={() => setSlowMo(!slowMo)}
+                                className={`px-4 py-2 min-h-[44px] rounded-lg transition text-lg shadow-lg ${slowMo ? 'bg-amber-500' : 'bg-slate-600 hover:bg-slate-500'}`}
+                            >🐢</button>
+                        </div>
+                    </div>
+
+                    {/* 下部スクロール領域 */}
+                    <div className="flex-1 overflow-y-auto p-3 space-y-4 pb-12 bg-slate-900 text-white">
+                        
+                        {/* アコーディオン・グラフ表示 */}
+                        {(mode === 1 || mode === 4) && (
+                            <div className="glass rounded-xl overflow-hidden shadow-lg">
+                                <button
+                                    onClick={() => setShowGraph(!showGraph)}
+                                    className="w-full p-3 font-bold text-left flex justify-between items-center bg-slate-800 hover:bg-slate-700 transition min-h-[44px]"
+                                >
+                                    <span>📊 {mode === 1 ? 'v-t / x-t' : '位置 / 速度'} グラフ</span>
+                                    <span>{showGraph ? '▲ 閉じる' : '▼ 開く'}</span>
+                                </button>
+                                {showGraph && (
+                                    <div className="p-3 border-t border-slate-700 bg-slate-800/50">
+                                        <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                                            <span>{mode === 1 ? (showXtPlot ? 'x-t' : 'v-t') : (showVelocityPlot ? 'v-t' : 'x-t')}</span>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => handleUndo(mode === 1 ? setOneDView : setSpringView, mode === 1 ? oneDHistoryRef : springHistoryRef)} className="px-2 py-1 min-h-[32px] bg-slate-700 rounded hover:bg-slate-600">Undo</button>
+                                                <button onClick={() => handleResetZoom(mode === 1 ? setOneDView : setSpringView, mode === 1 ? oneDHistoryRef : springHistoryRef)} className="px-2 py-1 min-h-[32px] bg-slate-700 rounded hover:bg-slate-600">Reset</button>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                {mode === 1 ? (
+                                                    <>
+                                                        <label className="flex flex-col sm:flex-row items-center gap-1 text-slate-400 px-2 py-1">
+                                                            <input type="checkbox" checked={showXtPlot} onChange={(e) => setShowXtPlot(e.target.checked)} className="w-4 h-4 accent-blue-500" />
+                                                            x-t
+                                                        </label>
+                                                        <label className="flex flex-col sm:flex-row items-center gap-1 text-slate-400 px-2 py-1">
+                                                            <input type="checkbox" checked={showCmPlot} onChange={(e) => setShowCmPlot(e.target.checked)} className="w-4 h-4 accent-blue-500" />
+                                                            CM
+                                                        </label>
+                                                    </>
+                                                ) : (
+                                                    <label className="flex flex-col sm:flex-row items-center gap-1 text-slate-400 px-2 py-1">
+                                                        <input type="checkbox" checked={showVelocityPlot} onChange={(e) => setShowVelocityPlot(e.target.checked)} className="w-4 h-4 accent-blue-500" />
+                                                        v-t
+                                                    </label>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="h-56">
+                                            {mode === 1 ? <canvas ref={oneDGraphRef} className="w-full h-full" /> : <canvas ref={springGraphRef} className="w-full h-full" />}
+                                        </div>
+                                        <div className="text-[10px] text-slate-500 text-center mt-1">Shift+ドラッグ: 矩形ズーム</div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* コントロールパネル */}
+                        <div className="glass rounded-xl p-4 space-y-4 shadow-lg text-sm">
+                                {/* パラメータ */}
+                                <div>
+                                    <div className="font-medium text-slate-300 mb-2">パラメータ</div>
+                                    <ToggleGroup label="質量 m₁ (kg)" options={[1, 2, 3]} value={m1} onChange={setM1} />
+                                    <ToggleGroup label="質量 m₂ (kg)" options={[1, 2, 3]} value={m2} onChange={setM2} />
+                                    {mode === 4 && (
+                                        <ToggleGroup label="質量 m₃ (kg)" options={[1, 2, 3]} value={m3} onChange={setM3} />
+                                    )}
+                                    {(mode === 1 || mode === 4) && (
+                                        <>
+                                            <ToggleGroup label="初速度 v₁ (m/s)" options={[0, 2, 4, 6]} value={v1} onChange={setV1} />
+                                            {mode === 1 && (
+                                                <ToggleGroup label="初速度 v₂ (m/s)" options={[-4, -2, 0, 2, 4, 6]} value={v2} onChange={setV2} />
+                                            )}
+                                        </>
+                                    )}
+                                    {(mode === 2 || mode === 3) && (
+                                        <>
+                                            <ToggleGroup
+                                                label="衝突パターン"
+                                                options={[1, 2, 3, 4]}
+                                                value={collisionPattern}
+                                                onChange={setCollisionPattern}
+                                            />
+                                            <div className="text-xs text-slate-400 p-2 bg-slate-800 rounded mb-2">
+                                                {collisionPattern === 1 && 'B静止: 斜め衝突（位置ずれ）'}
+                                                {collisionPattern === 2 && '交差: A=(3, -1), B=(-3, 1) m/s'}
+                                                {collisionPattern === 3 && '両方下向き: A=(3, -1), B=(-3, -1) m/s'}
+                                                {collisionPattern === 4 && '斜め高速: A=(4, 0.5), B=(-2.5, 1.5) m/s'}
+                                            </div>
+                                            {collisionPattern === 1 && (
+                                                <div className="mb-3">
+                                                    <div className="text-xs text-slate-400 mb-1">AのY位置 (衝突調整): {p1YOffset}</div>
+                                                    <input
+                                                        type="range"
+                                                        min="-40"
+                                                        max="40"
+                                                        value={p1YOffset}
+                                                        onChange={(e) => setP1YOffset(parseFloat(e.target.value))}
+                                                        className="slider-track"
+                                                    />
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                    {/* 反発係数 */}
+                                    <div className="mb-2">
+                                        <div className="text-xs text-slate-400 mb-1">反発係数 e = {restitution.toFixed(1)}</div>
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={1}
+                                            step={0.1}
+                                            value={restitution}
+                                            onChange={(e) => setRestitution(parseFloat(e.target.value))}
+                                            className="slider-track"
+                                        />
+                                        <div className="flex justify-between text-xs text-slate-500 mt-1">
+                                            <span>非弾性</span>
+                                            <span>完全弾性</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* カメラ制御 */}
+                                <div>
+                                    <div className="font-medium text-slate-300 mb-1">カメラ速度</div>
+
+                                    {mode === 1 && (
+                                        <SnapSlider
+                                            value={cameraVx}
+                                            onChange={setCameraVx}
+                                            snapPoints={getSnapPoints1D()}
+                                            min={Math.min(-5, v2 - 1)}
+                                            max={Math.max(7, v1 + 1)}
+                                        />
+                                    )}
+
+                                    {mode === 2 && (
+                                        <>
+                                            <div className="text-xs text-slate-400 mb-1">方向: VGに固定、大きさを調整</div>
+                                            <SnapSlider
+                                                value={cameraMag}
+                                                onChange={setCameraMag}
+                                                snapPoints={getSnapPoints2D()}
+                                                min={0}
+                                                max={6}
+                                            />
+                                        </>
+                                    )}
+
+                                    {mode === 3 && (
+                                        <div className="space-y-2">
+                                            <div className="text-xs text-slate-400">VG成分を計算して入力:</div>
+                                            <div className="flex gap-4 items-center">
+                                                <div className="flex-1">
+                                                    <label className="text-xs text-slate-500 mb-1 block">Vx</label>
+                                                    <input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={cameraVx}
+                                                        onChange={(e) => setCameraVx(parseFloat(e.target.value) || 0)}
+                                                        className={`input-field w-full text-[16px] min-h-[44px] ${Math.abs(cameraVx - vg.x) < 0.15 ? 'correct' : ''}`}
+                                                    />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <label className="text-xs text-slate-500 mb-1 block">Vy</label>
+                                                    <input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={cameraVy}
+                                                        onChange={(e) => setCameraVy(parseFloat(e.target.value) || 0)}
+                                                        className={`input-field w-full text-[16px] min-h-[44px] ${Math.abs(cameraVy - vg.y) < 0.15 ? 'correct' : ''}`}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="text-xs text-slate-500">
+                                                ヒント: VG = (m₁v₁ + m₂v₂) / (m₁ + m₂)
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {mode === 4 && (
+                                        <SnapSlider
+                                            value={cameraVx}
+                                            onChange={setCameraVx}
+                                            snapPoints={[
+                                                { value: 0, label: '0' },
+                                                { value: vg.x, label: 'VG' }
+                                            ]}
+                                            min={-1}
+                                            max={Math.max(7, v1 + 1)}
+                                        />
+                                    )}
+
+                                    {mode !== 3 && (
+                                        <div className="text-xs text-center text-slate-400 mt-1">
+                                            {mode === 2 ? `|V| = ${cameraMag.toFixed(1)}` : `V = ${cameraVx.toFixed(1)}`} m/s
+                                        </div>
+                                    )}
+                                </div>
+
+                        </div> {/* パラメータ終了 */}
+
+                        {/* 重心速度表示 */}
+                        <div className="text-center p-4 bg-slate-800 rounded-xl shadow-lg mt-4 mb-4">
+                            <div className="text-sm text-slate-400 mb-1">重心速度 V<sub>G</sub></div>
+                            <div className="text-xl font-bold text-yellow-400 tracking-wider">
+                                {(mode === 2 || mode === 3)
+                                    ? `(${vg.x.toFixed(2)}, ${vg.y.toFixed(2)})`
+                                    : `${vg.x.toFixed(2)}`
+                                } m/s
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 情報オーバーレイ */}
+                    {showInfo && (
+                        <div className="info-overlay" onClick={() => setShowInfo(false)}>
+                            <div className="glass rounded-2xl p-5 max-w-lg mx-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                                <h2 className="text-lg font-bold mb-3">使い方</h2>
+                                <div className="space-y-3 text-sm text-slate-300">
+                                    <div>
+                                        <strong className="text-white">1D衝突</strong>
+                                        <p>一直線上での弾性衝突。v₂に負の値を設定すると正面衝突になります。カメラ速度をVGに合わせると重心系（CM系）が観察できます。また、CM系では、常に物体A-重心-物体Bが質量の逆比となっている点にも注目してください。</p>
+                                    </div>
+                                    <div>
+                                        <strong className="text-white">2D基本</strong>
+                                        <p>斜め衝突。４パターンの斜め衝突があります。パターン１では、物体Bが静止。スライダーで物体Aの初期Y座標を調整できます。カメラ速度の大きさをスライダーで調整。方向はVGに固定されています。<strong>カメラ速度がVGとなったときは衝突前も後も物体の速度の向きが180度ずれている点に注目してください。</strong></p>
+                                    </div>
+                                    <div>
+                                        <strong className="text-white">2D発展</strong>
+                                        <p>VGのx成分とy成分を自分で計算して入力。正解するとCM-FRAME ACTIVEバッジが表示されます。</p>
+                                    </div>
+                                    <div>
+                                        <strong className="text-white">バネ系</strong>
+                                        <p>東大入試モデル。AがBに衝突し、e=0のときは合体してB-C間のバネで振動します。CM系としたとき、ばねは対照的な振動になっている点をグラフから確認してください。</p>
+                                    </div>
+                                    <div className="pt-2 border-t border-slate-700 text-xs">
+                                        <strong className="text-yellow-400">+ マーク</strong>: 重心位置<br />
+                                        <strong className="text-yellow-400">→ 実線</strong>: 速度ベクトル<br />
+                                        <strong className="text-yellow-400">--- 破線</strong>: 重心速度VG
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => setShowInfo(false)}
+                                    className="mt-4 w-full py-2 rounded-lg bg-slate-600 hover:bg-slate-500 transition"
+                                >
+                                    閉じる
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+
+</html>
