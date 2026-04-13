@@ -727,10 +727,7 @@
                 // 重心マーカー
                 const cmX = (() => {
                     if (mode === 4) {
-                        if (s.merged) {
-                            return (s.p2.m * s.p2.x + s.p3.m * s.p3.x) / (s.p2.m + s.p3.m);
-                        }
-                        return (s.p1.m * s.p1.x + s.p2.m * s.p2.x + s.p3.m * s.p3.x) / (s.p1.m + s.p2.m + s.p3.m);
+                        return (s.p2.m * s.p2.x + s.p3.m * s.p3.x) / (s.p2.m + s.p3.m);
                     }
                     if (s.p1.x < -9000) return s.p2.x;
                     return (s.p1.m * s.p1.x + s.p2.m * s.p2.x) / (s.p1.m + s.p2.m);
@@ -1200,70 +1197,6 @@
 
                         {/* コントロールパネル */}
                         <div className="glass rounded-xl p-4 space-y-4 shadow-lg text-sm">
-                                {/* パラメータ */}
-                                <div>
-                                    <div className="font-medium text-slate-300 mb-2">パラメータ</div>
-                                    <ToggleGroup label="質量 m₁ (kg)" options={[1, 2, 3]} value={m1} onChange={setM1} />
-                                    <ToggleGroup label="質量 m₂ (kg)" options={[1, 2, 3]} value={m2} onChange={setM2} />
-                                    {mode === 4 && (
-                                        <ToggleGroup label="質量 m₃ (kg)" options={[1, 2, 3]} value={m3} onChange={setM3} />
-                                    )}
-                                    {(mode === 1 || mode === 4) && (
-                                        <>
-                                            <ToggleGroup label="初速度 v₁ (m/s)" options={[0, 2, 4, 6]} value={v1} onChange={setV1} />
-                                            {mode === 1 && (
-                                                <ToggleGroup label="初速度 v₂ (m/s)" options={[-4, -2, 0, 2, 4, 6]} value={v2} onChange={setV2} />
-                                            )}
-                                        </>
-                                    )}
-                                    {(mode === 2 || mode === 3) && (
-                                        <>
-                                            <ToggleGroup
-                                                label="衝突パターン"
-                                                options={[1, 2, 3, 4]}
-                                                value={collisionPattern}
-                                                onChange={setCollisionPattern}
-                                            />
-                                            <div className="text-xs text-slate-400 p-2 bg-slate-800 rounded mb-2">
-                                                {collisionPattern === 1 && 'B静止: 斜め衝突（位置ずれ）'}
-                                                {collisionPattern === 2 && '交差: A=(3, -1), B=(-3, 1) m/s'}
-                                                {collisionPattern === 3 && '両方下向き: A=(3, -1), B=(-3, -1) m/s'}
-                                                {collisionPattern === 4 && '斜め高速: A=(4, 0.5), B=(-2.5, 1.5) m/s'}
-                                            </div>
-                                            {collisionPattern === 1 && (
-                                                <div className="mb-3">
-                                                    <div className="text-xs text-slate-400 mb-1">AのY位置 (衝突調整): {p1YOffset}</div>
-                                                    <input
-                                                        type="range"
-                                                        min="-40"
-                                                        max="40"
-                                                        value={p1YOffset}
-                                                        onChange={(e) => setP1YOffset(parseFloat(e.target.value))}
-                                                        className="slider-track"
-                                                    />
-                                                </div>
-                                            )}
-                                        </>
-                                    )}
-                                    {/* 反発係数 */}
-                                    <div className="mb-2">
-                                        <div className="text-xs text-slate-400 mb-1">反発係数 e = {restitution.toFixed(1)}</div>
-                                        <input
-                                            type="range"
-                                            min={0}
-                                            max={1}
-                                            step={0.1}
-                                            value={restitution}
-                                            onChange={(e) => setRestitution(parseFloat(e.target.value))}
-                                            className="slider-track"
-                                        />
-                                        <div className="flex justify-between text-xs text-slate-500 mt-1">
-                                            <span>非弾性</span>
-                                            <span>完全弾性</span>
-                                        </div>
-                                    </div>
-                                </div>
-
                                 {/* カメラ制御 */}
                                 <div>
                                     <div className="font-medium text-slate-300 mb-1">カメラ速度</div>
@@ -1340,6 +1273,70 @@
                                             {mode === 2 ? `|V| = ${cameraMag.toFixed(1)}` : `V = ${cameraVx.toFixed(1)}`} m/s
                                         </div>
                                     )}
+                                </div>
+
+                                {/* パラメータ */}
+                                <div>
+                                    <div className="font-medium text-slate-300 mb-2">パラメータ</div>
+                                    <ToggleGroup label="質量 m₁ (kg)" options={[1, 2, 3]} value={m1} onChange={setM1} />
+                                    <ToggleGroup label="質量 m₂ (kg)" options={[1, 2, 3]} value={m2} onChange={setM2} />
+                                    {mode === 4 && (
+                                        <ToggleGroup label="質量 m₃ (kg)" options={[1, 2, 3]} value={m3} onChange={setM3} />
+                                    )}
+                                    {(mode === 1 || mode === 4) && (
+                                        <>
+                                            <ToggleGroup label="初速度 v₁ (m/s)" options={[0, 2, 4, 6]} value={v1} onChange={setV1} />
+                                            {mode === 1 && (
+                                                <ToggleGroup label="初速度 v₂ (m/s)" options={[-4, -2, 0, 2, 4, 6]} value={v2} onChange={setV2} />
+                                            )}
+                                        </>
+                                    )}
+                                    {(mode === 2 || mode === 3) && (
+                                        <>
+                                            <ToggleGroup
+                                                label="衝突パターン"
+                                                options={[1, 2, 3, 4]}
+                                                value={collisionPattern}
+                                                onChange={setCollisionPattern}
+                                            />
+                                            <div className="text-xs text-slate-400 p-2 bg-slate-800 rounded mb-2">
+                                                {collisionPattern === 1 && 'B静止: 斜め衝突（位置ずれ）'}
+                                                {collisionPattern === 2 && '交差: A=(3, -1), B=(-3, 1) m/s'}
+                                                {collisionPattern === 3 && '両方下向き: A=(3, -1), B=(-3, -1) m/s'}
+                                                {collisionPattern === 4 && '斜め高速: A=(4, 0.5), B=(-2.5, 1.5) m/s'}
+                                            </div>
+                                            {collisionPattern === 1 && (
+                                                <div className="mb-3">
+                                                    <div className="text-xs text-slate-400 mb-1">AのY位置 (衝突調整): {p1YOffset}</div>
+                                                    <input
+                                                        type="range"
+                                                        min="-40"
+                                                        max="40"
+                                                        value={p1YOffset}
+                                                        onChange={(e) => setP1YOffset(parseFloat(e.target.value))}
+                                                        className="slider-track"
+                                                    />
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                    {/* 反発係数 */}
+                                    <div className="mb-2 border-t border-slate-700 pt-3 mt-3">
+                                        <div className="text-xs text-slate-400 mb-1">反発係数 e = {restitution.toFixed(1)}</div>
+                                        <input
+                                            type="range"
+                                            min={0}
+                                            max={1}
+                                            step={0.1}
+                                            value={restitution}
+                                            onChange={(e) => setRestitution(parseFloat(e.target.value))}
+                                            className="slider-track"
+                                        />
+                                        <div className="flex justify-between text-xs text-slate-500 mt-1">
+                                            <span>非弾性</span>
+                                            <span>完全弾性</span>
+                                        </div>
+                                    </div>
                                 </div>
 
                         </div> {/* パラメータ終了 */}
