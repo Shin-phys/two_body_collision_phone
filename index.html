@@ -612,26 +612,33 @@
                 ctx.fillStyle = '#0f172a';
                 ctx.fillRect(0, 0, w, h);
 
+                const zoom = 0.6; // 遠景モード（ズームアウト）
+                ctx.save();
+                ctx.translate(w / 2, h / 2);
+                ctx.scale(zoom, zoom);
+                ctx.translate(-w / 2, -h / 2);
+
                 const offsetX = w / 2 - camPos.x;
                 const offsetY = h / 2 - camPos.y;
 
                 // 動的グリッド
                 ctx.strokeStyle = 'rgba(148, 163, 184, 0.15)';
-                ctx.lineWidth = 1;
+                ctx.lineWidth = 1 / zoom; // 線を細くなりすぎないように
                 const gridSize = 50;
                 const gridOffsetX = (offsetX % gridSize + gridSize) % gridSize;
                 const gridOffsetY = (offsetY % gridSize + gridSize) % gridSize;
 
-                for (let x = gridOffsetX; x < w; x += gridSize) {
+                // ズームアウト時に描画範囲が足りなくなるのを防ぐため、描画面積を広げる
+                for (let x = gridOffsetX - w / zoom; x < w + w / zoom; x += gridSize) {
                     ctx.beginPath();
-                    ctx.moveTo(x, 0);
-                    ctx.lineTo(x, h);
+                    ctx.moveTo(x, -h / zoom);
+                    ctx.lineTo(x, h + h / zoom);
                     ctx.stroke();
                 }
-                for (let y = gridOffsetY; y < h; y += gridSize) {
+                for (let y = gridOffsetY - h / zoom; y < h + h / zoom; y += gridSize) {
                     ctx.beginPath();
-                    ctx.moveTo(0, y);
-                    ctx.lineTo(w, y);
+                    ctx.moveTo(-w / zoom, y);
+                    ctx.lineTo(w + w / zoom, y);
                     ctx.stroke();
                 }
 
@@ -673,9 +680,9 @@
                     ctx.stroke();
 
                     ctx.fillStyle = '#fff';
-                    ctx.font = 'bold 12px sans-serif';
+                    ctx.font = `bold ${14 / zoom}px sans-serif`;
                     ctx.textAlign = 'center';
-                    ctx.fillText(label, px, py + 4);
+                    ctx.fillText(label, px, py + (5 / zoom));
 
                     // 速度ベクトル
                     const vMag = Math.sqrt((p.vx || 0) ** 2 + (p.vy || 0) ** 2);
@@ -746,9 +753,10 @@
                 ctx.strokeStyle = '#facc15';
                 ctx.lineWidth = 3;
                 ctx.stroke();
-                ctx.font = 'bold 10px sans-serif';
+                ctx.stroke();
+                ctx.font = `bold ${12 / zoom}px sans-serif`;
                 ctx.fillStyle = '#facc15';
-                ctx.fillText('CM', cmPx + 15, cmPy - 8);
+                ctx.fillText('CM', cmPx + (15 / zoom), cmPy - (8 / zoom));
 
                 // 2Dモード: 重心速度ゴーストベクトル
                 if ((mode === 2 || mode === 3) && !isSynced) {
@@ -759,13 +767,15 @@
                     ctx.moveTo(cmPx, cmPy);
                     ctx.lineTo(cmPx + vg.x * vScale, cmPy + vg.y * vScale);
                     ctx.strokeStyle = 'rgba(250, 204, 21, 0.5)';
-                    ctx.lineWidth = 2;
+                    ctx.lineWidth = 2 / zoom;
                     ctx.stroke();
                     ctx.setLineDash([]);
-                    ctx.font = '9px sans-serif';
+                    ctx.font = `${11 / zoom}px sans-serif`;
                     ctx.fillStyle = 'rgba(250, 204, 21, 0.7)';
-                    ctx.fillText('VG', cmPx + vg.x * vScale + 5, cmPy + vg.y * vScale);
+                    ctx.fillText('VG', cmPx + vg.x * vScale + (8 / zoom), cmPy + vg.y * vScale);
                 }
+
+                ctx.restore();
 
                 if (mode === 1) {
                     const gCanvas = oneDGraphRef.current;
