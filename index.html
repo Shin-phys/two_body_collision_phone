@@ -427,8 +427,14 @@
                         cameraAnchorX: null
                     };
                 }
+                if (mode === 2 || mode === 3) {
+                    const s = stateRef.current;
+                    const camPos = getCameraPosition(0, s);
+                    traceRef.current.p1.push({ x: s.p1.x - camPos.x, y: s.p1.y - camPos.y });
+                    traceRef.current.p2.push({ x: s.p2.x - camPos.x, y: s.p2.y - camPos.y });
+                }
                 setTime(0);
-            }, [mode, m1, m2, m3, v1, v2, v2d, collisionPattern, p1YOffset]);
+            }, [mode, m1, m2, m3, v1, v2, v2d, collisionPattern, p1YOffset, getCameraPosition]);
 
             const getCameraPosition = useCallback((simTime, s) => {
                 const camV = getCameraV();
@@ -559,10 +565,10 @@
                     }
                 }
                 if (mode === 2 || mode === 3) {
-                    const camPos = { x: getCameraV().x * simTime * 60, y: getCameraV().y * simTime * 60 };
+                    const camPos = getCameraPosition(simTime, s);
                     traceRef.current.p1.push({ x: s.p1.x - camPos.x, y: s.p1.y - camPos.y });
                     traceRef.current.p2.push({ x: s.p2.x - camPos.x, y: s.p2.y - camPos.y });
-                    if (traceRef.current.p1.length > 240) {
+                    if (traceRef.current.p1.length > 300) {
                         traceRef.current.p1.shift();
                         traceRef.current.p2.shift();
                     }
